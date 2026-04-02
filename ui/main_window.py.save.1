@@ -30,7 +30,6 @@ class MainWindow(QWidget):
     def _setup_ui(self):
         main_layout = QVBoxLayout()
 
-        # 연결 영역
         connection_group = QGroupBox("연결 설정")
         connection_layout = QHBoxLayout()
 
@@ -48,7 +47,6 @@ class MainWindow(QWidget):
         connection_layout.addWidget(self.disconnect_button)
         connection_group.setLayout(connection_layout)
 
-        # 기능 버튼
         control_group = QGroupBox("기능")
         control_layout = QHBoxLayout()
 
@@ -63,7 +61,6 @@ class MainWindow(QWidget):
         control_layout.addWidget(self.exit_button)
         control_group.setLayout(control_layout)
 
-        # 로그창
         log_group = QGroupBox("로그")
         log_layout = QVBoxLayout()
 
@@ -131,17 +128,20 @@ class MainWindow(QWidget):
         read_success, raw_data = self.serial_manager.read_packet_once(wait_time=0.3)
 
         if not read_success:
-            self._append_log(f"수신 실패: {raw_data}")
+            try:
+                error_text = raw_data.decode("utf-8", errors="replace")
+            except Exception:
+                error_text = str(raw_data)
+            self._append_log(f"수신 실패: {error_text}")
             return
 
         if not raw_data:
-            self._append_log("수신된 응답이 없습니다.")
+           self._append_log("수신된 응답이 없습니다.")
             return
 
         self._append_log(f"수신 HEX: {bytes_to_hex_string(raw_data)}")
 
         parsed_ok, parsed_result = parse_position_response(raw_data)
-
         if parsed_ok:
             self._append_log("응답 파싱 성공")
             self._append_log(f"위치 raw: {parsed_result['position_raw']}")

@@ -1,3 +1,4 @@
+import time
 import serial
 import serial.tools.list_ports
 
@@ -7,22 +8,21 @@ class SerialManager:
         self.serial_port = None
 
     def list_ports(self):
-        """
-        실제 USB 시리얼 장치로 보이는 포트만 반환
-        예: /dev/ttyUSB0, /dev/ttyACM0
-        내부 포트(/dev/ttyS0 등)는 제외
-        """
         ports = serial.tools.list_ports.comports()
         filtered_ports = []
 
         for port in ports:
             device = port.device
-            if "ttyUSB" in device or "ttyACM" in device:
-                filtered_ports.append(device)
+
+            # 내부 기본 포트 제거
+            if device.startswith("/dev/ttyS"):
+                continue
+
+            filtered_ports.append(device)
 
         return filtered_ports
 
-    def connect(self, port: str, baudrate: int = 115200, timeout: float = 0.1):
+    def connect(self, port: str, baudrate: int = 115200, timeout: float = 0.2):
         if self.serial_port and self.serial_port.is_open:
             return True, f"이미 연결되어 있습니다: {self.serial_port.port}"
 
@@ -55,6 +55,30 @@ class SerialManager:
         try:
             self.serial_port.write(data)
             self.serial_port.flush()
-            return True, f"명령 전송 완료: {data!r}"
+            return True, "명령 전송 완료"
         except Exception as e:
             return False, f"명령 전송 실패: {e}"
+
+    def clear_input_buffer(self):
+        if self.is_connected():
+            try:
+                self.serial_port.reset_input_buffer()
+            except Exception:
+                pass
+
+    def read_packet_once(self, wait_time: float = 0.3, max_bytes: int = 256):
+        if not self.is_connected():
+            return False, "UART가 연결되어 있지 않습니다."
+
+        try:
+            time.sleep(wait_time)
+
+            available = self.serial_port.in_waiting
+            if available <= 0:
+                return True, b""
+
+            raw_data = self.serial_port.read(min(available, max_bytes))
+            return True, raw_data
+
+        except Exception as e:
+            return False, f"응답 읽기 실패: {e}"
