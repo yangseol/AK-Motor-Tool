@@ -1,6 +1,6 @@
 # AK-Motor-Tool
 
-AK70-10 모터를 UART 기반으로 설정/제어하기 위한 Ubuntu 툴
+AK 모터를 UART 기반으로 설정/제어하기 위한 Ubuntu 툴
 
 ## 기능
 - UART 연결
