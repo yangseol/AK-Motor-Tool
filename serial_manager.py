@@ -1,9 +1,26 @@
 import serial
+import serial.tools.list_ports
 
 
 class SerialManager:
     def __init__(self):
         self.serial_port = None
+
+    def list_ports(self):
+        """
+        실제 USB 시리얼 장치로 보이는 포트만 반환
+        예: /dev/ttyUSB0, /dev/ttyACM0
+        내부 포트(/dev/ttyS0 등)는 제외
+        """
+        ports = serial.tools.list_ports.comports()
+        filtered_ports = []
+
+        for port in ports:
+            device = port.device
+            if "ttyUSB" in device or "ttyACM" in device:
+                filtered_ports.append(device)
+
+        return filtered_ports
 
     def connect(self, port: str, baudrate: int = 115200, timeout: float = 0.1):
         if self.serial_port and self.serial_port.is_open:
@@ -30,3 +47,14 @@ class SerialManager:
 
     def is_connected(self):
         return self.serial_port is not None and self.serial_port.is_open
+
+    def send_bytes(self, data: bytes):
+        if not self.is_connected():
+            return False, "UART가 연결되어 있지 않습니다."
+
+        try:
+            self.serial_port.write(data)
+            self.serial_port.flush()
+            return True, f"명령 전송 완료: {data!r}"
+        except Exception as e:
+            return False, f"명령 전송 실패: {e}"
