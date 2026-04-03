@@ -32,7 +32,7 @@ class SerialManager:
                 baudrate=baudrate,
                 timeout=timeout
             )
-            return True, f"{port} 연결 성공"
+            return True, f"{port} 연결 성공 (baudrate={baudrate})"
         except Exception as e:
             self.serial_port = None
             return False, f"{port} 연결 실패: {e}"
@@ -66,7 +66,7 @@ class SerialManager:
             except Exception:
                 pass
 
-    def read_packet_once(self, wait_time: float = 0.3, max_bytes: int = 256):
+    def read_packet_once(self, wait_time: float = 0.5, max_bytes: int = 1024):
         if not self.is_connected():
             return False, "UART가 연결되어 있지 않습니다."
 
