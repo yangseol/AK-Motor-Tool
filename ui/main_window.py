@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QComboBox, QGroupBox, QLineEdit
+    QTextEdit, QComboBox, QGroupBox, QLineEdit, QCheckBox
 )
 from PyQt5.QtCore import QTimer
 
@@ -20,13 +20,11 @@ class MainWindow(QWidget):
         self.setWindowTitle("AK70 모터 설정 툴")
         self.resize(900, 720)
 
-        # 스트리밍 관련 상태
         self.streaming_enabled = False
         self.latest_position = None
         self.zero_offset = 0.0
         self.zero_set = False
 
-        # 타이머 (100ms)
         self.timer = QTimer()
         self.timer.timeout.connect(self._streaming_step)
 
@@ -59,19 +57,18 @@ class MainWindow(QWidget):
         connection_layout.addWidget(self.disconnect_button)
         connection_group.setLayout(connection_layout)
 
-        # ===== 실시간 표시 =====
+        # ===== 실시간 상태 =====
         status_group = QGroupBox("실시간 상태")
         status_layout = QVBoxLayout()
 
-        label_row_1 = QHBoxLayout()
+        self.connection_label = QLabel("연결 상태: 미연결")
+        self.connection_label.setStyleSheet("font-size: 16px;")
+
         self.raw_position_label = QLabel("실제 위치: --- rad")
         self.raw_position_label.setStyleSheet("font-size: 18px;")
-        label_row_1.addWidget(self.raw_position_label)
 
-        label_row_2 = QHBoxLayout()
         self.relative_position_label = QLabel("보정 위치: --- rad")
         self.relative_position_label.setStyleSheet("font-size: 18px;")
-        label_row_2.addWidget(self.relative_position_label)
 
         button_row = QHBoxLayout()
         self.start_stream_button = QPushButton("스트리밍 시작")
@@ -84,8 +81,9 @@ class MainWindow(QWidget):
         button_row.addWidget(self.zero_button)
         button_row.addWidget(self.clear_zero_button)
 
-        status_layout.addLayout(label_row_1)
-        status_layout.addLayout(label_row_2)
+        status_layout.addWidget(self.connection_label)
+        status_layout.addWidget(self.raw_position_label)
+        status_layout.addWidget(self.relative_position_label)
         status_layout.addLayout(button_row)
         status_group.setLayout(status_layout)
 
@@ -101,15 +99,15 @@ class MainWindow(QWidget):
 
         self.send_text_button = QPushButton("문자열 전송")
         self.send_hex_button = QPushButton("HEX 전송")
-        self.calibrate_button = QPushButton("캘리브레이션 (미구현)")
-        self.exit_button = QPushButton("디버그 종료 (미구현)")
+
+        self.show_raw_checkbox = QCheckBox("로그에 RAW HEX 보기")
+        self.show_raw_checkbox.setChecked(False)
 
         manual_layout.addWidget(self.text_input)
         manual_layout.addWidget(self.send_text_button)
         manual_layout.addWidget(self.hex_input)
         manual_layout.addWidget(self.send_hex_button)
-        manual_layout.addWidget(self.calibrate_button)
-        manual_layout.addWidget(self.exit_button)
+        manual_layout.addWidget(self.show_raw_checkbox)
         manual_group.setLayout(manual_layout)
 
         # ===== 로그 =====
@@ -119,7 +117,10 @@ class MainWindow(QWidget):
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
 
+        self.clear_log_button = QPushButton("로그 지우기")
+
         log_layout.addWidget(self.log_text)
+        log_layout.addWidget(self.clear_log_button)
         log_group.setLayout(log_layout)
 
         main_layout.addWidget(connection_group)
@@ -141,8 +142,7 @@ class MainWindow(QWidget):
 
         self.send_text_button.clicked.connect(self._handle_send_text)
         self.send_hex_button.clicked.connect(self._handle_send_hex)
-        self.calibrate_button.clicked.connect(self._handle_not_implemented)
-        self.exit_button.clicked.connect(self._handle_not_implemented)
+        self.clear_log_button.clicked.connect(self._clear_log)
 
     def _refresh_port_list(self):
         self.port_combo.clear()
@@ -159,9 +159,15 @@ class MainWindow(QWidget):
         ok, msg = self.serial_manager.connect(port, baud)
         self._append_log(msg)
 
+        if ok:
+            self.connection_label.setText(f"연결 상태: 연결됨 ({port}, {baud})")
+        else:
+            self.connection_label.setText("연결 상태: 연결 실패")
+
     def _handle_disconnect(self):
         ok, msg = self.serial_manager.disconnect()
         self._append_log(msg)
+        self.connection_label.setText("연결 상태: 미연결")
 
     # ===== 스트리밍 =====
     def _start_streaming(self):
@@ -191,6 +197,9 @@ class MainWindow(QWidget):
             return
 
         frames = extract_frames(raw)
+
+        if self.show_raw_checkbox.isChecked() and raw:
+            self._append_log(f"RAW HEX: {bytes_to_hex_string(raw)}")
 
         for frame in frames:
             parsed_ok, parsed = parse_position_response(frame)
@@ -226,25 +235,74 @@ class MainWindow(QWidget):
         self.zero_set = False
         self._append_log("0 기준 설정 해제")
 
-    # ===== 수동 =====
+    # ===== 수동 전송 =====
     def _handle_send_text(self):
         txt = self.text_input.text().strip()
         if not txt:
+            self._append_log("문자열 명령이 비어 있습니다.")
             return
-        data = (txt + "\n").encode()
-        self.serial_manager.send_bytes(data)
+
+        data = (txt + "\n").encode("utf-8")
+        self.serial_manager.clear_input_buffer()
+        ok, msg = self.serial_manager.send_bytes(data)
         self._append_log(f"TX: {txt}")
+        self._append_log(msg)
+
+        if not ok:
+            return
+
+        self._read_manual_response(wait_time=0.6)
 
     def _handle_send_hex(self):
+        hex_text = self.hex_input.text().strip()
+        if not hex_text:
+            self._append_log("HEX 명령이 비어 있습니다.")
+            return
+
         try:
-            data = bytes(int(x, 16) for x in self.hex_input.text().split())
-            self.serial_manager.send_bytes(data)
-            self._append_log(f"TX HEX: {bytes_to_hex_string(data)}")
+            data = bytes(int(x, 16) for x in hex_text.split())
         except Exception as e:
             self._append_log(f"HEX 오류: {e}")
+            return
 
-    def _handle_not_implemented(self):
-        self._append_log("이 기능은 다음 단계에서 구현합니다.")
+        self.serial_manager.clear_input_buffer()
+        ok, msg = self.serial_manager.send_bytes(data)
+        self._append_log(f"TX HEX: {bytes_to_hex_string(data)}")
+        self._append_log(msg)
+
+        if not ok:
+            return
+
+        self._read_manual_response(wait_time=0.6)
+
+    def _read_manual_response(self, wait_time: float):
+        ok, raw = self.serial_manager.read_packet_once(wait_time=wait_time)
+
+        if not ok:
+            self._append_log(f"수신 실패: {raw}")
+            return
+
+        if not raw:
+            self._append_log("수신된 응답이 없습니다.")
+            return
+
+        self._append_log(f"수신 HEX RAW: {bytes_to_hex_string(raw)}")
+
+        frames = extract_frames(raw)
+        self._append_log(f"분리된 프레임 수: {len(frames)}")
+
+        for idx, frame in enumerate(frames, start=1):
+            self._append_log(f"[프레임 {idx}] {bytes_to_hex_string(frame)}")
+
+            parsed_ok, parsed = parse_position_response(frame)
+            if parsed_ok:
+                self._append_log(
+                    f"  위치 raw={parsed['position_raw']}, "
+                    f"위치 값={parsed['position_value']:.4f}"
+                )
+
+    def _clear_log(self):
+        self.log_text.clear()
 
     def _append_log(self, msg: str):
         self.log_text.append(msg)
