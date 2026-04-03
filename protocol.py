@@ -2,66 +2,193 @@ def bytes_to_hex_string(data: bytes) -> str:
     return " ".join(f"{b:02X}" for b in data)
 
 
+CRC16_TAB = [
+    0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7,
+    0x8108, 0x9129, 0xA14A, 0xB16B, 0xC18C, 0xD1AD, 0xE1CE, 0xF1EF,
+    0x1231, 0x0210, 0x3273, 0x2252, 0x52B5, 0x4294, 0x72F7, 0x62D6,
+    0x9339, 0x8318, 0xB37B, 0xA35A, 0xD3BD, 0xC39C, 0xF3FF, 0xE3DE,
+    0x2462, 0x3443, 0x0420, 0x1401, 0x64E6, 0x74C7, 0x44A4, 0x5485,
+    0xA56A, 0xB54B, 0x8528, 0x9509, 0xE5EE, 0xF5CF, 0xC5AC, 0xD58D,
+    0x3653, 0x2672, 0x1611, 0x0630, 0x76D7, 0x66F6, 0x5695, 0x46B4,
+    0xB75B, 0xA77A, 0x9719, 0x8738, 0xF7DF, 0xE7FE, 0xD79D, 0xC7BC,
+    0x48C4, 0x58E5, 0x6886, 0x78A7, 0x0840, 0x1861, 0x2802, 0x3823,
+    0xC9CC, 0xD9ED, 0xE98E, 0xF9AF, 0x8948, 0x9969, 0xA90A, 0xB92B,
+    0x5AF5, 0x4AD4, 0x7AB7, 0x6A96, 0x1A71, 0x0A50, 0x3A33, 0x2A12,
+    0xDBFD, 0xCBDC, 0xFBBF, 0xEB9E, 0x9B79, 0x8B58, 0xBB3B, 0xAB1A,
+    0x6CA6, 0x7C87, 0x4CE4, 0x5CC5, 0x2C22, 0x3C03, 0x0C60, 0x1C41,
+    0xEDAE, 0xFD8F, 0xCDEC, 0xDDCD, 0xAD2A, 0xBD0B, 0x8D68, 0x9D49,
+    0x7E97, 0x6EB6, 0x5ED5, 0x4EF4, 0x3E13, 0x2E32, 0x1E51, 0x0E70,
+    0xFF9F, 0xEFBE, 0xDFDD, 0xCFFC, 0xBF1B, 0xAF3A, 0x9F59, 0x8F78,
+    0x9188, 0x81A9, 0xB1CA, 0xA1EB, 0xD10C, 0xC12D, 0xF14E, 0xE16F,
+    0x1080, 0x00A1, 0x30C2, 0x20E3, 0x5004, 0x4025, 0x7046, 0x6067,
+    0x83B9, 0x9398, 0xA3FB, 0xB3DA, 0xC33D, 0xD31C, 0xE37F, 0xF35E,
+    0x02B1, 0x1290, 0x22F3, 0x32D2, 0x4235, 0x5214, 0x6277, 0x7256,
+    0xB5EA, 0xA5CB, 0x95A8, 0x8589, 0xF56E, 0xE54F, 0xD52C, 0xC50D,
+    0x34E2, 0x24C3, 0x14A0, 0x0481, 0x7466, 0x6447, 0x5424, 0x4405,
+    0xA7DB, 0xB7FA, 0x8799, 0x97B8, 0xE75F, 0xF77E, 0xC71D, 0xD73C,
+    0x26D3, 0x36F2, 0x0691, 0x16B0, 0x6657, 0x7676, 0x4615, 0x5634,
+    0xD94C, 0xC96D, 0xF90E, 0xE92F, 0x99C8, 0x89E9, 0xB98A, 0xA9AB,
+    0x5844, 0x4865, 0x7806, 0x6827, 0x18C0, 0x08E1, 0x3882, 0x28A3,
+    0xCB7D, 0xDB5C, 0xEB3F, 0xFB1E, 0x8BF9, 0x9BD8, 0xABBB, 0xBB9A,
+    0x4A75, 0x5A54, 0x6A37, 0x7A16, 0x0AF1, 0x1AD0, 0x2AB3, 0x3A92,
+    0xFD2E, 0xED0F, 0xDD6C, 0xCD4D, 0xBDAA, 0xAD8B, 0x9DE8, 0x8DC9,
+    0x7C26, 0x6C07, 0x5C64, 0x4C45, 0x3CA2, 0x2C83, 0x1CE0, 0x0CC1,
+    0xEF1F, 0xFF3E, 0xCF5D, 0xDF7C, 0xAF9B, 0xBFBA, 0x8FD9, 0x9FF8,
+    0x6E17, 0x7E36, 0x4E55, 0x5E74, 0x2E93, 0x3EB2, 0x0ED1, 0x1EF0,
+]
+
+
+def crc16(data: bytes) -> int:
+    cksum = 0
+    for b in data:
+        cksum = CRC16_TAB[((cksum >> 8) ^ b) & 0xFF] ^ ((cksum << 8) & 0xFFFF)
+    return cksum & 0xFFFF
+
+
 def build_get_position_command() -> bytes:
-    """
-    CubeMars 문서 기준:
-    Get motor position
-    02 02 0B 04 9C 7E 03
-    """
     return bytes([0x02, 0x02, 0x0B, 0x04, 0x9C, 0x7E, 0x03])
 
 
-def extract_frames(raw_data: bytes):
-    """
-    큰 raw_data 안에서 0x02 ... 0x03 형태의 프레임들을 분리한다.
-    아주 단순한 프레임 분리기.
-    """
-    frames = []
-    start_idx = None
+def build_get_motor_values_command() -> bytes:
+    return bytes([0x02, 0x01, 0x04, 0x40, 0x84, 0x03])
 
-    for i, b in enumerate(raw_data):
-        if b == 0x02 and start_idx is None:
-            start_idx = i
-        elif b == 0x03 and start_idx is not None:
-            frame = raw_data[start_idx:i + 1]
+
+def build_set_zero_command() -> bytes:
+    return bytes([0x02, 0x02, 0x5F, 0x01, 0x0E, 0xA0, 0x03])
+
+
+def extract_frames(raw: bytes):
+    frames = []
+    i = 0
+    n = len(raw)
+
+    while i < n:
+        if raw[i] != 0x02:
+            i += 1
+            continue
+
+        if i + 1 >= n:
+            break
+
+        payload_len = raw[i + 1]
+        total_len = 1 + 1 + payload_len + 2 + 1
+
+        if i + total_len > n:
+            break
+
+        frame = raw[i:i + total_len]
+        if frame[-1] == 0x03:
             frames.append(frame)
-            start_idx = None
+
+        i += total_len
 
     return frames
 
 
+def _payload(frame: bytes) -> bytes:
+    if len(frame) < 6:
+        return b""
+    payload_len = frame[1]
+    return frame[2:2 + payload_len]
+
+
+def _int16(buf: bytes, idx: int) -> int:
+    v = (buf[idx] << 8) | buf[idx + 1]
+    if v & 0x8000:
+        v -= 0x10000
+    return v
+
+
+def _int32(buf: bytes, idx: int) -> int:
+    v = (
+        (buf[idx] << 24)
+        | (buf[idx + 1] << 16)
+        | (buf[idx + 2] << 8)
+        | buf[idx + 3]
+    )
+    if v & 0x80000000:
+        v -= 0x100000000
+    return v
+
+
 def parse_position_response(frame: bytes):
-    """
-    예상 프레임 형식:
-    02 05 16 [4바이트 위치] [2바이트 CRC] 03
+    payload = _payload(frame)
 
-    예:
-    02 05 16 00 1A B6 64 D5 F4 03
-    """
+    if len(payload) != 5:
+        return False, "payload length mismatch"
 
-    if len(frame) < 10:
-        return False, f"프레임 길이가 너무 짧습니다. len={len(frame)}"
+    if payload[0] != 0x16:
+        return False, f"not position frame: 0x{payload[0]:02X}"
 
-    if frame[0] != 0x02:
-        return False, "시작 바이트가 0x02가 아닙니다."
+    pos = _int32(payload, 1) / 10000.0
+    return True, {"position_value": pos}
 
-    if frame[-1] != 0x03:
-        return False, "끝 바이트가 0x03이 아닙니다."
 
-    length = frame[1]
-    frame_id = frame[2]
+def _sanitize_temp(value):
+    if value is None:
+        return None
+    if value < -20.0 or value > 150.0:
+        return None
+    return value
 
-    if frame_id != 0x16:
-        return False, f"frame_id가 0x16이 아닙니다. frame_id=0x{frame_id:02X}"
 
-    # 위치 데이터는 4바이트 signed big-endian
-    pos_bytes = frame[3:7]
-    pos_int = int.from_bytes(pos_bytes, byteorder="big", signed=True)
-    pos_value = pos_int / 10000.0
+def parse_motor_values_response(frame: bytes):
+    payload = _payload(frame)
 
-    return True, {
-        "length": length,
-        "frame_id": frame_id,
-        "position_raw": pos_int,
-        "position_value": pos_value,
-    }
+    if not payload:
+        return False, "empty payload"
+
+    if payload[0] != 0x04:
+        return False, f"not motor-values frame: 0x{payload[0]:02X}"
+
+    min_len = 1 + 2 + 2 + 4 + 4 + 4 + 4 + 2 + 4 + 2
+    if len(payload) < min_len:
+        return False, f"payload too short: {len(payload)}"
+
+    try:
+        i = 1
+
+        mos_temp = _int16(payload, i) / 10.0
+        i += 2
+
+        motor_temp = _int16(payload, i) / 10.0
+        i += 2
+
+        output_current = _int32(payload, i) / 100.0
+        i += 4
+
+        input_current = _int32(payload, i) / 100.0
+        i += 4
+
+        id_current = _int32(payload, i) / 100.0
+        i += 4
+
+        iq_current = _int32(payload, i) / 100.0
+        i += 4
+
+        throttle = _int16(payload, i) / 1000.0
+        i += 2
+
+        speed = _int32(payload, i)
+        i += 4
+
+        input_voltage = _int16(payload, i) / 10.0
+        i += 2
+
+        mos_temp = _sanitize_temp(mos_temp)
+        motor_temp = _sanitize_temp(motor_temp)
+
+        return True, {
+            "input_voltage_v": input_voltage,
+            "motor_temp_c": motor_temp,
+            "mos_temp_c": mos_temp,
+            "output_current_a": output_current,
+            "input_current_a": input_current,
+            "id_current_a": id_current,
+            "iq_current_a": iq_current,
+            "throttle": throttle,
+            "speed": speed,
+        }
+
+    except Exception as e:
+        return False, f"parse error: {e}"

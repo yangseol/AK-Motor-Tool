@@ -7,13 +7,13 @@ from PyQt5.QtCore import QTimer
 from serial_manager import SerialManager
 from protocol import (
     build_get_position_command,
+    build_get_motor_values_command,
+    build_set_zero_command,
     bytes_to_hex_string,
-    parse_position_response,
     extract_frames,
+    parse_position_response,
+    parse_motor_values_response,
 )
-
-
-HARDWARE_ZERO_COMMAND = bytes([0x02, 0x02, 0x5F, 0x01, 0x0E, 0xA0, 0x03])
 
 
 class MainWindow(QWidget):
@@ -21,7 +21,7 @@ class MainWindow(QWidget):
         super().__init__()
         self.serial_manager = SerialManager()
         self.setWindowTitle("AK70 모터 설정 툴")
-        self.resize(900, 720)
+        self.resize(950, 760)
 
         self.streaming_enabled = False
         self.latest_position = None
@@ -71,22 +71,33 @@ class MainWindow(QWidget):
         self.relative_position_label = QLabel("보정 위치: --- rad")
         self.relative_position_label.setStyleSheet("font-size: 18px;")
 
+        self.id_note_label = QLabel("모터 ID: UART에서 아직 확정 못 함")
+        self.input_voltage_label = QLabel("입력 전압: N/A")
+        self.motor_temp_label = QLabel("모터 온도: N/A")
+        self.mos_temp_label = QLabel("MOS 온도: N/A")
+
         button_row = QHBoxLayout()
         self.start_stream_button = QPushButton("스트리밍 시작")
         self.stop_stream_button = QPushButton("스트리밍 정지")
         self.zero_button = QPushButton("현재 위치를 0으로 설정")
         self.clear_zero_button = QPushButton("0 설정 해제")
         self.hardware_zero_button = QPushButton("하드웨어 0 설정")
+        self.read_info_button = QPushButton("모터 정보 읽기")
 
         button_row.addWidget(self.start_stream_button)
         button_row.addWidget(self.stop_stream_button)
         button_row.addWidget(self.zero_button)
         button_row.addWidget(self.clear_zero_button)
         button_row.addWidget(self.hardware_zero_button)
+        button_row.addWidget(self.read_info_button)
 
         status_layout.addWidget(self.connection_label)
         status_layout.addWidget(self.raw_position_label)
         status_layout.addWidget(self.relative_position_label)
+        status_layout.addWidget(self.id_note_label)
+        status_layout.addWidget(self.input_voltage_label)
+        status_layout.addWidget(self.motor_temp_label)
+        status_layout.addWidget(self.mos_temp_label)
         status_layout.addLayout(button_row)
         status_group.setLayout(status_layout)
 
@@ -141,6 +152,7 @@ class MainWindow(QWidget):
         self.zero_button.clicked.connect(self._set_zero_here)
         self.clear_zero_button.clicked.connect(self._clear_zero)
         self.hardware_zero_button.clicked.connect(self._handle_hardware_zero)
+        self.read_info_button.clicked.connect(self._handle_read_motor_info)
 
         self.send_text_button.clicked.connect(self._handle_send_text)
         self.send_hex_button.clicked.connect(self._handle_send_hex)
@@ -257,9 +269,10 @@ class MainWindow(QWidget):
         if was_streaming:
             self._stop_streaming()
 
+        cmd = build_set_zero_command()
         self.serial_manager.clear_input_buffer()
-        ok, msg = self.serial_manager.send_bytes(HARDWARE_ZERO_COMMAND)
-        self._append_log(f"TX HARDWARE ZERO: {bytes_to_hex_string(HARDWARE_ZERO_COMMAND)}")
+        ok, msg = self.serial_manager.send_bytes(cmd)
+        self._append_log(f"TX HARDWARE ZERO: {bytes_to_hex_string(cmd)}")
         self._append_log(msg)
 
         read_ok, raw = self.serial_manager.read_packet_once(wait_time=0.6)
@@ -272,6 +285,88 @@ class MainWindow(QWidget):
 
         if was_streaming:
             self._start_streaming()
+
+    def _handle_read_motor_info(self):
+        if not self.serial_manager.is_connected():
+            self._append_log("UART 먼저 연결해야 합니다.")
+            return
+
+        was_streaming = self.streaming_enabled
+        if was_streaming:
+            self._stop_streaming()
+
+        cmd = build_get_motor_values_command()
+        self.serial_manager.clear_input_buffer()
+
+        ok, msg = self.serial_manager.send_bytes(cmd)
+        self._append_log(f"TX MOTOR INFO: {bytes_to_hex_string(cmd)}")
+        self._append_log(msg)
+
+        if not ok:
+            if was_streaming:
+                self._start_streaming()
+            return
+
+        read_ok, raw = self.serial_manager.read_packet_once(wait_time=0.6)
+
+        if not read_ok:
+            self._append_log(f"수신 실패: {raw}")
+            if was_streaming:
+                self._start_streaming()
+            return
+
+        if not raw:
+            self._append_log("수신된 응답이 없습니다.")
+            if was_streaming:
+                self._start_streaming()
+            return
+
+        self._append_log(f"수신 HEX RAW: {bytes_to_hex_string(raw)}")
+
+        frames = extract_frames(raw)
+        self._append_log(f"분리된 프레임 수: {len(frames)}")
+
+        parsed_any = False
+        for frame in frames:
+            parsed_ok, parsed = parse_motor_values_response(frame)
+            if not parsed_ok:
+                continue
+
+            parsed_any = True
+            self._update_motor_info(parsed)
+
+            self._append_log("모터 정보 파싱 성공")
+            self._append_log(f"  Input Voltage: {parsed.get('input_voltage_v')}")
+            self._append_log(f"  MOS Temp: {parsed.get('mos_temp_c')}")
+            self._append_log(f"  Motor Temp: {parsed.get('motor_temp_c')}")
+            self._append_log(f"  Output Current: {parsed.get('output_current_a')}")
+            self._append_log(f"  Input Current: {parsed.get('input_current_a')}")
+            self._append_log(f"  Id Current: {parsed.get('id_current_a')}")
+            self._append_log(f"  Iq Current: {parsed.get('iq_current_a')}")
+            self._append_log("  Motor ID: UART 응답만으로 아직 확정 못 함")
+            break
+
+        if not parsed_any:
+            self._append_log("모터 정보 파싱 실패")
+
+        if was_streaming:
+            self._start_streaming()
+
+    def _update_motor_info(self, info: dict):
+        voltage = info.get("input_voltage_v")
+        motor_temp = info.get("motor_temp_c")
+        mos_temp = info.get("mos_temp_c")
+
+        self.id_note_label.setText("모터 ID: UART 응답만으로 아직 확정 못 함")
+        self.input_voltage_label.setText(
+            f"입력 전압: {f'{voltage:.2f} V' if voltage is not None else 'N/A'}"
+        )
+        self.motor_temp_label.setText(
+            f"모터 온도: {f'{motor_temp:.1f} °C' if motor_temp is not None else 'N/A'}"
+        )
+        self.mos_temp_label.setText(
+            f"MOS 온도: {f'{mos_temp:.1f} °C' if mos_temp is not None else 'N/A'}"
+        )
 
     def _handle_send_text(self):
         txt = self.text_input.text().strip()
@@ -333,10 +428,7 @@ class MainWindow(QWidget):
 
             parsed_ok, parsed = parse_position_response(frame)
             if parsed_ok:
-                self._append_log(
-                    f"  위치 raw={parsed['position_raw']}, "
-                    f"위치 값={parsed['position_value']:.4f}"
-                )
+                self._append_log(f"  위치 값={parsed['position_value']:.4f}")
 
     def _clear_log(self):
         self.log_text.clear()
