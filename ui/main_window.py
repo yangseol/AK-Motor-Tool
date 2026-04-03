@@ -18,11 +18,13 @@ class MainWindow(QWidget):
         super().__init__()
         self.serial_manager = SerialManager()
         self.setWindowTitle("AK70 모터 설정 툴")
-        self.resize(900, 700)
+        self.resize(900, 720)
 
         # 스트리밍 관련 상태
         self.streaming_enabled = False
         self.latest_position = None
+        self.zero_offset = 0.0
+        self.zero_set = False
 
         # 타이머 (100ms)
         self.timer = QTimer()
@@ -59,17 +61,32 @@ class MainWindow(QWidget):
 
         # ===== 실시간 표시 =====
         status_group = QGroupBox("실시간 상태")
-        status_layout = QHBoxLayout()
+        status_layout = QVBoxLayout()
 
-        self.position_label = QLabel("현재 위치: --- rad")
-        self.position_label.setStyleSheet("font-size: 18px;")
+        label_row_1 = QHBoxLayout()
+        self.raw_position_label = QLabel("실제 위치: --- rad")
+        self.raw_position_label.setStyleSheet("font-size: 18px;")
+        label_row_1.addWidget(self.raw_position_label)
 
+        label_row_2 = QHBoxLayout()
+        self.relative_position_label = QLabel("보정 위치: --- rad")
+        self.relative_position_label.setStyleSheet("font-size: 18px;")
+        label_row_2.addWidget(self.relative_position_label)
+
+        button_row = QHBoxLayout()
         self.start_stream_button = QPushButton("스트리밍 시작")
         self.stop_stream_button = QPushButton("스트리밍 정지")
+        self.zero_button = QPushButton("현재 위치를 0으로 설정")
+        self.clear_zero_button = QPushButton("0 설정 해제")
 
-        status_layout.addWidget(self.position_label)
-        status_layout.addWidget(self.start_stream_button)
-        status_layout.addWidget(self.stop_stream_button)
+        button_row.addWidget(self.start_stream_button)
+        button_row.addWidget(self.stop_stream_button)
+        button_row.addWidget(self.zero_button)
+        button_row.addWidget(self.clear_zero_button)
+
+        status_layout.addLayout(label_row_1)
+        status_layout.addLayout(label_row_2)
+        status_layout.addLayout(button_row)
         status_group.setLayout(status_layout)
 
         # ===== 수동 테스트 =====
@@ -84,11 +101,15 @@ class MainWindow(QWidget):
 
         self.send_text_button = QPushButton("문자열 전송")
         self.send_hex_button = QPushButton("HEX 전송")
+        self.calibrate_button = QPushButton("캘리브레이션 (미구현)")
+        self.exit_button = QPushButton("디버그 종료 (미구현)")
 
         manual_layout.addWidget(self.text_input)
         manual_layout.addWidget(self.send_text_button)
         manual_layout.addWidget(self.hex_input)
         manual_layout.addWidget(self.send_hex_button)
+        manual_layout.addWidget(self.calibrate_button)
+        manual_layout.addWidget(self.exit_button)
         manual_group.setLayout(manual_layout)
 
         # ===== 로그 =====
@@ -115,9 +136,13 @@ class MainWindow(QWidget):
 
         self.start_stream_button.clicked.connect(self._start_streaming)
         self.stop_stream_button.clicked.connect(self._stop_streaming)
+        self.zero_button.clicked.connect(self._set_zero_here)
+        self.clear_zero_button.clicked.connect(self._clear_zero)
 
         self.send_text_button.clicked.connect(self._handle_send_text)
         self.send_hex_button.clicked.connect(self._handle_send_hex)
+        self.calibrate_button.clicked.connect(self._handle_not_implemented)
+        self.exit_button.clicked.connect(self._handle_not_implemented)
 
     def _refresh_port_list(self):
         self.port_combo.clear()
@@ -167,15 +192,39 @@ class MainWindow(QWidget):
 
         frames = extract_frames(raw)
 
-        for f in frames:
-            ok2, parsed = parse_position_response(f)
-            if ok2:
+        for frame in frames:
+            parsed_ok, parsed = parse_position_response(frame)
+            if parsed_ok:
                 self.latest_position = parsed["position_value"]
 
         if self.latest_position is not None:
-            self.position_label.setText(
-                f"현재 위치: {self.latest_position:.4f} rad"
+            self.raw_position_label.setText(
+                f"실제 위치: {self.latest_position:.4f} rad"
             )
+
+            if self.zero_set:
+                relative = self.latest_position - self.zero_offset
+                self.relative_position_label.setText(
+                    f"보정 위치: {relative:.4f} rad"
+                )
+            else:
+                self.relative_position_label.setText(
+                    f"보정 위치: {self.latest_position:.4f} rad"
+                )
+
+    def _set_zero_here(self):
+        if self.latest_position is None:
+            self._append_log("아직 위치값이 없습니다. 먼저 스트리밍을 시작하세요.")
+            return
+
+        self.zero_offset = self.latest_position
+        self.zero_set = True
+        self._append_log(f"현재 위치를 0 기준으로 설정: offset={self.zero_offset:.4f} rad")
+
+    def _clear_zero(self):
+        self.zero_offset = 0.0
+        self.zero_set = False
+        self._append_log("0 기준 설정 해제")
 
     # ===== 수동 =====
     def _handle_send_text(self):
@@ -193,6 +242,9 @@ class MainWindow(QWidget):
             self._append_log(f"TX HEX: {bytes_to_hex_string(data)}")
         except Exception as e:
             self._append_log(f"HEX 오류: {e}")
+
+    def _handle_not_implemented(self):
+        self._append_log("이 기능은 다음 단계에서 구현합니다.")
 
     def _append_log(self, msg: str):
         self.log_text.append(msg)
