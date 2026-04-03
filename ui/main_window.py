@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QComboBox, QGroupBox, QLineEdit, QCheckBox
+    QTextEdit, QComboBox, QGroupBox, QLineEdit, QCheckBox, QMessageBox
 )
 from PyQt5.QtCore import QTimer
 
@@ -11,6 +11,9 @@ from protocol import (
     parse_position_response,
     extract_frames,
 )
+
+
+HARDWARE_ZERO_COMMAND = bytes([0x02, 0x02, 0x5F, 0x01, 0x0E, 0xA0, 0x03])
 
 
 class MainWindow(QWidget):
@@ -35,7 +38,6 @@ class MainWindow(QWidget):
     def _setup_ui(self):
         main_layout = QVBoxLayout()
 
-        # ===== 연결 =====
         connection_group = QGroupBox("연결 설정")
         connection_layout = QHBoxLayout()
 
@@ -57,7 +59,6 @@ class MainWindow(QWidget):
         connection_layout.addWidget(self.disconnect_button)
         connection_group.setLayout(connection_layout)
 
-        # ===== 실시간 상태 =====
         status_group = QGroupBox("실시간 상태")
         status_layout = QVBoxLayout()
 
@@ -75,11 +76,13 @@ class MainWindow(QWidget):
         self.stop_stream_button = QPushButton("스트리밍 정지")
         self.zero_button = QPushButton("현재 위치를 0으로 설정")
         self.clear_zero_button = QPushButton("0 설정 해제")
+        self.hardware_zero_button = QPushButton("하드웨어 0 설정")
 
         button_row.addWidget(self.start_stream_button)
         button_row.addWidget(self.stop_stream_button)
         button_row.addWidget(self.zero_button)
         button_row.addWidget(self.clear_zero_button)
+        button_row.addWidget(self.hardware_zero_button)
 
         status_layout.addWidget(self.connection_label)
         status_layout.addWidget(self.raw_position_label)
@@ -87,7 +90,6 @@ class MainWindow(QWidget):
         status_layout.addLayout(button_row)
         status_group.setLayout(status_layout)
 
-        # ===== 수동 테스트 =====
         manual_group = QGroupBox("수동 테스트")
         manual_layout = QVBoxLayout()
 
@@ -110,7 +112,6 @@ class MainWindow(QWidget):
         manual_layout.addWidget(self.show_raw_checkbox)
         manual_group.setLayout(manual_layout)
 
-        # ===== 로그 =====
         log_group = QGroupBox("로그")
         log_layout = QVBoxLayout()
 
@@ -139,6 +140,7 @@ class MainWindow(QWidget):
         self.stop_stream_button.clicked.connect(self._stop_streaming)
         self.zero_button.clicked.connect(self._set_zero_here)
         self.clear_zero_button.clicked.connect(self._clear_zero)
+        self.hardware_zero_button.clicked.connect(self._handle_hardware_zero)
 
         self.send_text_button.clicked.connect(self._handle_send_text)
         self.send_hex_button.clicked.connect(self._handle_send_hex)
@@ -169,7 +171,6 @@ class MainWindow(QWidget):
         self._append_log(msg)
         self.connection_label.setText("연결 상태: 미연결")
 
-    # ===== 스트리밍 =====
     def _start_streaming(self):
         if not self.serial_manager.is_connected():
             self._append_log("UART 먼저 연결해야 합니다.")
@@ -235,7 +236,43 @@ class MainWindow(QWidget):
         self.zero_set = False
         self._append_log("0 기준 설정 해제")
 
-    # ===== 수동 전송 =====
+    def _handle_hardware_zero(self):
+        if not self.serial_manager.is_connected():
+            self._append_log("UART 먼저 연결해야 합니다.")
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "하드웨어 0 설정 확인",
+            "현재 모터 위치를 하드웨어 기준 0으로 설정합니다.\n계속할까요?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            self._append_log("하드웨어 0 설정 취소")
+            return
+
+        was_streaming = self.streaming_enabled
+        if was_streaming:
+            self._stop_streaming()
+
+        self.serial_manager.clear_input_buffer()
+        ok, msg = self.serial_manager.send_bytes(HARDWARE_ZERO_COMMAND)
+        self._append_log(f"TX HARDWARE ZERO: {bytes_to_hex_string(HARDWARE_ZERO_COMMAND)}")
+        self._append_log(msg)
+
+        read_ok, raw = self.serial_manager.read_packet_once(wait_time=0.6)
+        if not read_ok:
+            self._append_log(f"수신 실패: {raw}")
+        elif raw:
+            self._append_log(f"수신 HEX RAW: {bytes_to_hex_string(raw)}")
+        else:
+            self._append_log("수신된 응답이 없습니다.")
+
+        if was_streaming:
+            self._start_streaming()
+
     def _handle_send_text(self):
         txt = self.text_input.text().strip()
         if not txt:
